@@ -7,3 +7,10 @@ font = "sans serif"
 
 [server]
 enableCORS = false
+
+
+[client]
+showErrorDetails = true
+
+[runner]
+requirements = "requirements.txt"
