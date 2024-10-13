@@ -52,9 +52,24 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Image files
+*.png
+*.jpg
+*.jpeg
+
+
 # Translations
 *.mo
 *.pot
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
 # Django stuff:
 *.log
