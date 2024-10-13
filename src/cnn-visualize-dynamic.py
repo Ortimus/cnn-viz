@@ -1,7 +1,12 @@
+import streamlit as st
+
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.utils import plot_model
-import streamlit as st
+
+import io
+from PIL import Image
+
 
 # Function to create a dynamic CNN model with variable layers
 def create_dynamic_cnn_model(input_shape, num_layers, filters_list, dense_units):
@@ -46,5 +51,20 @@ cnn_model.summary(print_fn=lambda x: model_summary.append(x))
 st.text("\n".join(model_summary))
 
 # Save the model architecture to an image and display it
-plot_model(cnn_model, to_file='cnn_model_dynamic.png', show_shapes=True, show_layer_names=True)
-st.image('cnn_model_dynamic.png', caption='Current CNN Model Architecture', use_column_width=True)
+
+# Create a buffer to save the image in-memory because we don't have access to the file system on streamlit cloud
+buffer = io.BytesIO()
+
+# plot_model(cnn_model, to_file='cnn_model_dynamic.png', show_shapes=True, show_layer_names=True)
+plot_model(cnn_model, to_file=buffer, show_shapes=True, show_layer_names=True, format='png')
+
+# Rewind the buffer's position to the beginning
+buffer.seek(0)
+
+# Open the image from the buffer using PIL
+image = Image.open(buffer)
+
+# Display the image using Streamlit
+#st.image('cnn_model_dynamic.png', caption='Current CNN Model Architecture', use_column_width=True)
+st.image(image, caption='Current CNN Model Architecture', use_column_width=True)
+
