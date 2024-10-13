@@ -2,9 +2,11 @@ import streamlit as st
 
 import tensorflow as tf
 from tensorflow.keras import layers, models
-from tensorflow.keras.utils import plot_model
 
 import io
+from tensorflow.keras.utils import model_to_dot
+from PIL import Image
+import graphviz as gv
 
 
 # Function to create a dynamic CNN model with variable layers
@@ -51,19 +53,23 @@ st.text("\n".join(model_summary))
 
 # Save the model architecture to an image and display it
 
-# Create a buffer to save the image in-memory because we don't have access to the file system on streamlit cloud
-buffer = io.BytesIO()
+# Convert the Keras model to a dot format
+dot_graph = model_to_dot(cnn_model, show_shapes=True, show_layer_names=True)
 
-# plot_model(cnn_model, to_file='cnn_model_dynamic.png', show_shapes=True, show_layer_names=True)
-plot_model(cnn_model, to_file=buffer, show_shapes=True, show_layer_names=True, format='png')
+# Convert the dot data to a Graphviz graph
+graphviz_source = gv.Source(dot_graph.to_string())
 
-# Rewind the buffer's position to the beginning
+# Render the graph to a PNG format and store it in a BytesIO buffer
+png_data = graphviz_source.pipe(format='png')
+
+# Create a BytesIO buffer and load the PNG data into it
+buffer = io.BytesIO(png_data)
+
+# Rewind the buffer to the beginning
 buffer.seek(0)
 
-# Display the image using Streamlit
-#st.image('cnn_model_dynamic.png', caption='Current CNN Model Architecture', use_column_width=True)
+# Open the image from the buffer using PIL
+image = Image.open(buffer)
 
-# Display the image using Streamlit by reading the buffer as bytes
-st.image(buffer, caption='Current CNN Model Architecture', use_column_width=True)
-
-
+# Display the image in Streamlit
+st.image(image, caption='Current CNN Model Architecture', use_column_width=True)
