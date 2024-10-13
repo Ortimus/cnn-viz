@@ -1,0 +1,9 @@
+[theme]
+primaryColor = "#4F8BC9"  # A medium blue-gray for primary actions and highlights
+backgroundColor = "#E6EAF0"  # Very light blue-gray for the main background
+secondaryBackgroundColor = "#FFFFFF"  # White for contrast and readability
+textColor = "#2C3E50"  # Dark blue-gray for main text
+font = "sans serif"
+
+[server]
+enableCORS = false
