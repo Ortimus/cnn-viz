@@ -5,7 +5,7 @@ This Streamlit app allows users to dynamically configure and visualize Convoluti
 ## Requirements
 
 - Anaconda or Miniconda
-- See `environment.yml` for package dependencies
+- See `local_environment.yml` for package dependencies for conda
 
 ## Features
 
@@ -25,7 +25,7 @@ This Streamlit app allows users to dynamically configure and visualize Convoluti
 
 2. Create and activate the Conda environment:
    ```
-   conda env create -f environment.yml
+   conda env create -f local_environment.yml
    conda activate cnnviz-env
    ```
 
