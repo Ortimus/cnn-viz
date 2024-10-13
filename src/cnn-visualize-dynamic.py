@@ -5,7 +5,6 @@ from tensorflow.keras import layers, models
 from tensorflow.keras.utils import plot_model
 
 import io
-from PIL import Image
 
 
 # Function to create a dynamic CNN model with variable layers
@@ -61,10 +60,10 @@ plot_model(cnn_model, to_file=buffer, show_shapes=True, show_layer_names=True, f
 # Rewind the buffer's position to the beginning
 buffer.seek(0)
 
-# Open the image from the buffer using PIL
-image = Image.open(buffer)
-
 # Display the image using Streamlit
 #st.image('cnn_model_dynamic.png', caption='Current CNN Model Architecture', use_column_width=True)
-st.image(image, caption='Current CNN Model Architecture', use_column_width=True)
+
+# Display the image using Streamlit by reading the buffer as bytes
+st.image(buffer, caption='Current CNN Model Architecture', use_column_width=True)
+
 
