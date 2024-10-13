@@ -92,7 +92,7 @@ nest-asyncio==1.6.0
 notebook==7.2.2
 notebook_shim==0.2.3
 numexpr==2.8.7
-numpy==1.23.5
+numpy>=1.26.0 
 oauthlib==3.2.2
 opt-einsum==3.3.0
 overrides==7.4.0
