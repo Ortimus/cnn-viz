@@ -28,30 +28,65 @@ def create_dynamic_cnn_model(input_shape, num_conv_layers, filters_list, kernel_
     
     return model
 
-# Function to create a Graphviz representation of the model with shallower boxes
+# Function to create a Graphviz representation of the model with ReLU activations
 def model_to_graphviz(model):
     dot = graphviz.Digraph()
-    dot.attr(rankdir='TB', nodesep='0.1', ranksep='0.3')
+    dot.attr(rankdir='TB', nodesep='0.1', ranksep='0.5')
     
-    def add_layer(layer, layer_id):
+    def calculate_output_shape(layer, input_shape):
+        if isinstance(layer, layers.Conv2D):
+            return (input_shape[0] // 2, input_shape[1] // 2, layer.filters)  # Assuming stride 1 and 'same' padding
+        elif isinstance(layer, layers.MaxPooling2D):
+            return (input_shape[0] // 2, input_shape[1] // 2, input_shape[2])
+        elif isinstance(layer, layers.Flatten):
+            return (input_shape[0] * input_shape[1] * input_shape[2],)
+        elif isinstance(layer, layers.Dense):
+            return (layer.units,)
+        else:
+            return input_shape
+
+    def add_layer(layer, layer_id, input_shape):
         layer_type = layer.__class__.__name__
-        layer_shape = str(layer.output_shape)
+        layer_name = layer.name
+        output_shape = calculate_output_shape(layer, input_shape)
+        
         if isinstance(layer, layers.Conv2D):
             kernel_size = layer.kernel_size
-            label = f'{layer_type} ({kernel_size[0]}x{kernel_size[1]})\\n{layer_shape}'
+            label = f'{layer_type} ({kernel_size[0]}x{kernel_size[1]})\\n{layer_name}\\n{output_shape}'
         else:
-            label = f'{layer_type}\\n{layer_shape}'
-        dot.node(str(layer_id), label, shape='box', style='filled,rounded', 
-                 fillcolor='lightblue', width='2', height='0.7', 
-                 fontname='Arial', fontsize='10')
+            label = f'{layer_type}\\n{layer_name}\\n{output_shape}'
+        return label, output_shape
 
-    def connect_layers(prev_id, curr_id):
-        dot.edge(str(prev_id), str(curr_id))
-
+    prev_node = None
+    input_shape = model.input_shape[1:]  # Exclude batch dimension
     for i, layer in enumerate(model.layers):
-        add_layer(layer, i)
-        if i > 0:
-            connect_layers(i-1, i)
+        with dot.subgraph(name=f'cluster_{i}') as c:
+            c.attr(style='filled', color='lightgrey')
+            layer_name = f'layer_{i}'
+            try:
+                layer_label, output_shape = add_layer(layer, i, input_shape)
+            except Exception as e:
+                layer_label = f"Layer {i}\\n(Error: {str(e)})"
+                output_shape = input_shape
+            c.node(layer_name, label=layer_label, shape='box', style='filled,rounded', 
+                   fillcolor='lightblue', width='2', height='0.7', 
+                   fontname='Arial', fontsize='10')
+            
+            if isinstance(layer, (layers.Conv2D, layers.Dense)) and i < len(model.layers) - 1:
+                relu_name = f'relu_{i}'
+                c.node(relu_name, "ReLU", shape='ellipse', style='filled', 
+                       fillcolor='lightyellow', width='1.5', height='0.5', 
+                       fontname='Arial', fontsize='10')
+                c.edge(layer_name, relu_name)
+                last_node = relu_name
+            else:
+                last_node = layer_name
+            
+            if prev_node:
+                dot.edge(prev_node, layer_name)
+            
+            prev_node = last_node
+            input_shape = output_shape
 
     return dot
 
@@ -85,38 +120,43 @@ num_classes = st.sidebar.slider("Number of Output Classes", min_value=2, max_val
 input_shape = (64, 64, 1)  # Increased input size
 
 # Create the model based on the current settings
-cnn_model = create_dynamic_cnn_model(input_shape=input_shape, num_conv_layers=num_conv_layers, 
-                                     filters_list=filters_list, kernel_sizes=kernel_sizes,
-                                     num_dense_layers=num_dense_layers, 
-                                     dense_units_list=dense_units_list, num_classes=num_classes)
+try:
+    cnn_model = create_dynamic_cnn_model(input_shape=input_shape, num_conv_layers=num_conv_layers, 
+                                         filters_list=filters_list, kernel_sizes=kernel_sizes,
+                                         num_dense_layers=num_dense_layers, 
+                                         dense_units_list=dense_units_list, num_classes=num_classes)
 
-# Display the model summary
-st.subheader("Model Summary")
-model_summary = []
-cnn_model.summary(print_fn=lambda x: model_summary.append(x))
-st.text("\n".join(model_summary))
+    # Display the model summary
+    st.subheader("Model Summary")
+    model_summary = []
+    cnn_model.summary(print_fn=lambda x: model_summary.append(x))
+    st.text("\n".join(model_summary))
 
-# Create and display the Graphviz representation
-st.subheader("Model Architecture")
-dot = model_to_graphviz(cnn_model)
-st.graphviz_chart(dot, use_container_width=True)
+    # Create and display the Graphviz representation
+    st.subheader("Model Architecture")
+    dot = model_to_graphviz(cnn_model)
+    st.graphviz_chart(dot, use_container_width=True)
 
-# Add some spacing
-st.write("")
-st.write("")
+    # Add some spacing
+    st.write("")
+    st.write("")
 
-# Explanation of the model
-st.subheader("Model Explanation")
-st.write(f"""
-This Convolutional Neural Network (CNN) model is dynamically generated based on your input parameters. 
-Here's a breakdown of its structure:
+    # Explanation of the model
+    st.subheader("Model Explanation")
+    st.write(f"""
+    This Convolutional Neural Network (CNN) model is dynamically generated based on your input parameters. 
+    Here's a breakdown of its structure:
 
-1. It starts with an input layer that accepts images of size 64x64 pixels with 1 channel (grayscale).
-2. The model then has {num_conv_layers} convolutional layer(s), each followed by a max pooling layer. 
-3. Each convolutional layer uses a configurable kernel size and ReLU activation function.
-4. After the convolutional layers, the output is flattened.
-5. There are {num_dense_layers - 1} dense (fully connected) layer(s) with ReLU activation.
-6. Finally, there's an output dense layer with {num_classes} units and softmax activation, suitable for a {num_classes}-class classification problem.
+    1. It starts with an input layer that accepts images of size 64x64 pixels with 1 channel (grayscale).
+    2. The model then has {num_conv_layers} convolutional layer(s), each followed by a max pooling layer. 
+    3. Each convolutional layer uses a configurable kernel size and ReLU activation function.
+    4. After the convolutional layers, the output is flattened.
+    5. There are {num_dense_layers - 1} dense (fully connected) layer(s) with ReLU activation.
+    6. Finally, there's an output dense layer with {num_classes} units and softmax activation, suitable for a {num_classes}-class classification problem.
 
-You can adjust the model's complexity using the sliders and dropdowns in the sidebar. Experiment with different configurations to see how they affect the model's architecture!
-""")
+    You can adjust the model's complexity using the sliders and dropdowns in the sidebar. Experiment with different configurations to see how they affect the model's architecture!
+    """)
+
+except Exception as e:
+    st.error(f"An error occurred while creating the model: {str(e)}")
+    st.error("Please try adjusting the model parameters or check the console for more details.")
