@@ -5,26 +5,30 @@ import graphviz
 import pandas as pd
 
 def create_dynamic_cnn_model(input_shape, num_conv_layers, filters_list, kernel_sizes, num_dense_layers, dense_units_list, num_classes):
-    model = models.Sequential()
+    # Create input layer explicitly
+    inputs = layers.Input(shape=input_shape)
     
     # Initial convolutional layer
-    model.add(layers.Conv2D(filters_list[0], kernel_sizes[0], activation='relu', padding='same', input_shape=input_shape))
-    model.add(layers.MaxPooling2D((2, 2)))
+    x = layers.Conv2D(filters_list[0], kernel_sizes[0], activation='relu', padding='same')(inputs)
+    x = layers.MaxPooling2D((2, 2))(x)
     
-    # Add additional convolutional layers based on num_conv_layers
+    # Add additional convolutional layers
     for i in range(1, num_conv_layers):
-        model.add(layers.Conv2D(filters_list[i], kernel_sizes[i], activation='relu', padding='same'))
-        model.add(layers.MaxPooling2D((2, 2)))
+        x = layers.Conv2D(filters_list[i], kernel_sizes[i], activation='relu', padding='same')(x)
+        x = layers.MaxPooling2D((2, 2))(x)
     
-    # Flatten the output to feed into fully connected layers
-    model.add(layers.Flatten())
+    # Flatten
+    x = layers.Flatten()(x)
     
-    # Add dense layers
-    for i in range(num_dense_layers - 1):  # -1 because we add the output layer separately
-        model.add(layers.Dense(dense_units_list[i], activation='relu'))
+    # Dense layers
+    for i in range(num_dense_layers - 1):
+        x = layers.Dense(dense_units_list[i], activation='relu')(x)
     
-    # Output layer: num_classes units, softmax activation
-    model.add(layers.Dense(num_classes, activation='softmax'))
+    # Output layer
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
+    
+    # Create model
+    model = models.Model(inputs=inputs, outputs=outputs)
     
     return model
 
@@ -100,23 +104,25 @@ def format_model_summary(model):
             'font-family': 'monospace',
         })
     )
-    
+
 def model_to_graphviz(model):
     try:
         dot = graphviz.Digraph(engine='dot', format='png')
         
-        dot.attr(rankdir='TB',       # Top to bottom flow
+        # Make the graph wider and adjust spacing
+        dot.attr(rankdir='TB',       
                 nodesep='2.0',       # Horizontal space between nodes
-                ranksep='1.5')       # Vertical space for better ranks
+                ranksep='1.5')       # Vertical space between ranks
         
+        # Add graph-level attributes for better layout
         dot.graph_attr.update({
             'splines': 'ortho',
             'concentrate': 'true',
             'fontsize': '16',
-            'size': '45,40',         # Made overall graph slightly wider
+            'size': '45,40',        # Wide and tall fixed size
             'margin': '0.5'
         })
-
+        
         layer_colors = {
             'Input': '#E1F5E1',
             'Conv2D': '#E6F3FF',
@@ -146,8 +152,8 @@ def model_to_graphviz(model):
                 shape='box',
                 style='filled',
                 fillcolor=layer_colors['Input'],
-                width='2.5',
-                height='1.2')
+                width='3.0',
+                height='1.3')
         
         prev_node = input_name
         node_counter += 1
@@ -157,9 +163,16 @@ def model_to_graphviz(model):
             layer_type = layer.__class__.__name__
             layer_name = f'layer_{node_counter}'
             calc_name = f'calc_{node_counter}'
-            output_shape = layer.output_shape
+            output_shape = layer.get_output_shape_at(0)
             
-            # Prepare calculation text and layer properties
+            # Default values in case none of the conditions match
+            calc_text = ""
+            label = layer_type
+            color = '#FFFFFF'  # Default white
+            add_activation = False
+            activation_type = None
+            
+            # Create calculation box first
             if isinstance(layer, layers.Conv2D):
                 calc_text = (
                     f'Input: {layer.input_shape[1]}×{layer.input_shape[2]}×{layer.input_shape[3]}\n'
@@ -217,33 +230,34 @@ def model_to_graphviz(model):
                            shape='box',
                            style='filled',
                            fillcolor=color,
-                           width='3.0',        
-                           height='1.3')       
+                           width='3.0',     # Made wider
+                           height='1.3')
                 
-                # Add calculation node                
-                cluster.node(calc_name,
-                           calc_text,
-                           shape='note',
-                           style='filled,dashed',
-                           fillcolor=layer_colors['Calculation'],
-                           fontname='Courier',
-                           fontsize='14',
-                           margin='0.2',       # Reduced margin from 14
-                           width='3.0',        # Reduced width  from 4.0
-                           height='1.2')
+                # Add calculation node if there is calculation text
+                if calc_text:
+                    cluster.node(calc_name,
+                               calc_text,
+                               shape='note',
+                               style='filled,dashed',
+                               fillcolor=layer_colors['Calculation'],
+                               fontname='Courier',
+                               fontsize='14',
+                               margin='0.2',
+                               width='3.0',    # Made less wide
+                               height='1.2')
                 
-                # Invisible edge to force calculation node to the right
-                cluster.edge(layer_name, calc_name, 
-                           style='dashed', 
-                           constraint='false', 
-                           color='#666666',
-                           dir='none') 
+                    # Connect with dashed line without arrow
+                    cluster.edge(layer_name, calc_name, 
+                               style='dashed', 
+                               constraint='false', 
+                               color='#666666',
+                               dir='none')
             
             # Connect main flow
             dot.edge(prev_node, layer_name, penwidth='2.0')
             
             # Add activation if needed
-            if add_activation:
+            if add_activation and activation_type:
                 activation_name = f'activation_{node_counter}'
                 dot.node(activation_name,
                         activation_type,
@@ -264,8 +278,8 @@ def model_to_graphviz(model):
                            shape='box',
                            style='filled',
                            fillcolor=layer_colors['Output'],
-                           width='2.5',
-                           height='1.2')
+                           width='3.0',
+                           height='1.3')
                     dot.edge(activation_name, output_name, penwidth='2.0')
             else:
                 prev_node = layer_name
@@ -274,8 +288,12 @@ def model_to_graphviz(model):
         
         return dot
     except Exception as e:
-        return None    
-    
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error details: {error_details}")
+        st.error(f"Visualization error: {str(e)}")
+        return None
+
 def main():
     st.title("Dynamic CNN Model Architecture")
 
