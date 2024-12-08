@@ -2,213 +2,425 @@ import streamlit as st
 import tensorflow as tf
 from tensorflow.keras import layers, models
 import graphviz
+import pandas as pd
 
 def create_dynamic_cnn_model(input_shape, num_conv_layers, filters_list, kernel_sizes, num_dense_layers, dense_units_list, num_classes):
     model = models.Sequential()
     
+    # Initial convolutional layer
     model.add(layers.Conv2D(filters_list[0], kernel_sizes[0], activation='relu', padding='same', input_shape=input_shape))
     model.add(layers.MaxPooling2D((2, 2)))
     
+    # Add additional convolutional layers based on num_conv_layers
     for i in range(1, num_conv_layers):
         model.add(layers.Conv2D(filters_list[i], kernel_sizes[i], activation='relu', padding='same'))
         model.add(layers.MaxPooling2D((2, 2)))
     
+    # Flatten the output to feed into fully connected layers
     model.add(layers.Flatten())
     
-    for i in range(num_dense_layers - 1):
+    # Add dense layers
+    for i in range(num_dense_layers - 1):  # -1 because we add the output layer separately
         model.add(layers.Dense(dense_units_list[i], activation='relu'))
     
+    # Output layer: num_classes units, softmax activation
     model.add(layers.Dense(num_classes, activation='softmax'))
     
     return model
 
-def model_to_graphviz(model):
-    dot = graphviz.Digraph()
-    dot.attr(rankdir='TB', nodesep='0.2', ranksep='0.3')  # Updated as requested
+def format_model_summary(model):
+    """Convert model summary to a pandas DataFrame with activation info"""
+    stringlist = []
+    model.summary(print_fn=lambda x: stringlist.append(x))
     
-    def calculate_output_shape(layer, input_shape):
-        if isinstance(layer, layers.Conv2D):
-            return (input_shape[0], input_shape[1], layer.filters)  # Same padding
-        elif isinstance(layer, layers.MaxPooling2D):
-            return (input_shape[0] // 2, input_shape[1] // 2, input_shape[2])
-        elif isinstance(layer, layers.Flatten):
-            return (input_shape[0] * input_shape[1] * input_shape[2],)
-        elif isinstance(layer, layers.Dense):
-            return (layer.units,)
-        else:
-            return input_shape
-
-    def calculate_params(layer, input_shape):
-        if isinstance(layer, layers.Conv2D):
-            return layer.kernel_size[0] * layer.kernel_size[1] * input_shape[2] * layer.filters + layer.filters
-        elif isinstance(layer, layers.Dense):
-            return input_shape[0] * layer.units + layer.units
-        else:
-            return 0
-
-    def add_layer(layer, layer_id, input_shape):
-        layer_type = layer.__class__.__name__
-        layer_name = layer.name
-        output_shape = calculate_output_shape(layer, input_shape)
-        params = calculate_params(layer, input_shape)
+    # Parse the summary into a structured format
+    layers_list = []
+    dense_layers = len([layer for layer in model.layers if isinstance(layer, tf.keras.layers.Dense)])
+    current_dense = 0
+    
+    # Add input layer
+    input_shape = model.input_shape
+    layers_list.append({
+        'Layer Type': '(Input)',
+        'Output Shape': f'(None, {input_shape[1]}, {input_shape[2]}, {input_shape[3]})',
+        'Activation': 'None',
+        'Parameters': 0
+    })
+    
+    # Parse each layer from the model directly
+    for layer in model.layers:
+        layer_type = f"({layer.__class__.__name__})"
         
-        if isinstance(layer, layers.Conv2D):
-            kernel_size = layer.kernel_size
-            label = f'{layer_type} ({kernel_size[0]}x{kernel_size[1]})\\n{layer_name}\\n{output_shape}\\nParams: {params}'
-            color = 'lightblue'
-        elif isinstance(layer, layers.MaxPooling2D):
-            label = f'{layer_type}\\n{layer_name}\\n{output_shape}'
-            color = 'orange'
-        elif isinstance(layer, layers.Dense):
-            label = f'{layer_type}\\n{layer_name}\\n{output_shape}\\nParams: {params}'
-            color = 'lightyellow'
+        if isinstance(layer, tf.keras.layers.Dense):
+            current_dense += 1
+            activation = "Softmax" if current_dense == dense_layers else "ReLU"
+        elif isinstance(layer, tf.keras.layers.Conv2D):
+            activation = "ReLU"
         else:
-            label = f'{layer_type}\\n{layer_name}\\n{output_shape}'
-            color = 'white'
+            activation = "None"
+            
+        # Get the layer's output shape and parameters from the summary text
+        layer_info = next((line for line in stringlist[2:-4] 
+                          if line.strip() and layer_type in line), '')
+        if layer_info:
+            parts = layer_info.strip().split()
+            output_shape = ' '.join(parts[1:-1])
+            params = int(parts[-1].replace(',', ''))
+        else:
+            output_shape = str(layer.output_shape)
+            params = layer.count_params()
+            
+        layer_data = {
+            'Layer Type': layer_type,
+            'Output Shape': output_shape,
+            'Activation': activation,
+            'Parameters': params
+        }
+        layers_list.append(layer_data)
+    
+    # Add total parameters row instead of output row
+    total_params = model.count_params()
+    layers_list.append({
+        'Layer Type': 'Total',
+        'Output Shape': '',
+        'Activation': '',
+        'Parameters': total_params
+    })
+    
+    df = pd.DataFrame(layers_list)
+    
+    # Improve display format
+    st.dataframe(
+        df.style
+        .format({
+            'Parameters': '{:,}',
+        })
+        .set_properties(**{
+            'text-align': 'left',
+            'font-family': 'monospace',
+        })
+    )
+    
+def model_to_graphviz(model):
+    try:
+        dot = graphviz.Digraph(engine='dot', format='png')
         
-        return label, output_shape, color, params
+        dot.attr(rankdir='TB',       # Top to bottom flow
+                nodesep='2.0',       # Horizontal space between nodes
+                ranksep='1.5')       # Vertical space for better ranks
+        
+        dot.graph_attr.update({
+            'splines': 'ortho',
+            'concentrate': 'true',
+            'fontsize': '16',
+            'size': '45,40',         # Made overall graph slightly wider
+            'margin': '0.5'
+        })
 
-    def edge_label(prev_shape, curr_shape, params):
-        if len(prev_shape) == 3 and len(curr_shape) == 3:
-            if prev_shape[0] != curr_shape[0] or prev_shape[1] != curr_shape[1]:
-                return f'[Shape: {prev_shape[0]}/{2}={curr_shape[0]}]\\n[Params: {params}]'
+        layer_colors = {
+            'Input': '#E1F5E1',
+            'Conv2D': '#E6F3FF',
+            'MaxPooling2D': '#F0F7EA',
+            'Flatten': '#FFF4E6',
+            'Dense': '#F3E6FF',
+            'ReLU': '#FFE6E6',
+            'Softmax': '#E6FFEF',
+            'Output': '#F5E1E1',
+            'Calculation': '#FFF8DC'  # Light yellow for calculations
+        }
+        
+        # Default node attributes
+        dot.attr('node', 
+                fontsize='16',
+                margin='0.4')
+        
+        node_counter = 0
+        
+        # Add input layer
+        input_shape = model.input_shape
+        channels_text = "RGB" if input_shape[3] == 3 else "Grayscale"
+        input_name = f'layer_{node_counter}'
+        
+        dot.node(input_name,
+                f'Input\n{input_shape[1]}x{input_shape[2]}x{input_shape[3]}\n{channels_text}',
+                shape='box',
+                style='filled',
+                fillcolor=layer_colors['Input'],
+                width='2.5',
+                height='1.2')
+        
+        prev_node = input_name
+        node_counter += 1
+        
+        dense_count = 0
+        for layer in model.layers:
+            layer_type = layer.__class__.__name__
+            layer_name = f'layer_{node_counter}'
+            calc_name = f'calc_{node_counter}'
+            output_shape = layer.output_shape
+            
+            # Prepare calculation text and layer properties
+            if isinstance(layer, layers.Conv2D):
+                calc_text = (
+                    f'Input: {layer.input_shape[1]}×{layer.input_shape[2]}×{layer.input_shape[3]}\n'
+                    f'Kernel: {layer.kernel_size[0]}×{layer.kernel_size[1]}, Filters: {layer.filters}\n'
+                    f'Parameters: {layer.input_shape[3]}×{layer.kernel_size[0]}×{layer.kernel_size[1]}×{layer.filters} + {layer.filters}\n'
+                    f'Output: {output_shape[1]}×{output_shape[2]}×{output_shape[3]}'
+                )
+                label = f'{layer_type}\n{layer.filters} filters\n{layer.kernel_size[0]}x{layer.kernel_size[1]}'
+                color = layer_colors['Conv2D']
+                add_activation = True
+                activation_type = 'ReLU'
+                
+            elif isinstance(layer, layers.MaxPooling2D):
+                calc_text = (
+                    f'Input: {layer.input_shape[1]}×{layer.input_shape[2]}×{layer.input_shape[3]}\n'
+                    f'Pool size: 2×2, Stride: 2\n'
+                    f'Output: {output_shape[1]}×{output_shape[2]}×{output_shape[3]}'
+                )
+                label = f'{layer_type}\n2x2'
+                color = layer_colors['MaxPooling2D']
+                add_activation = False
+                
+            elif isinstance(layer, layers.Flatten):
+                calc_text = (
+                    f'Input: {layer.input_shape[1]}×{layer.input_shape[2]}×{layer.input_shape[3]}\n'
+                    f'Output: {output_shape[1]} (flattened)'
+                )
+                label = f'{layer_type}'
+                color = layer_colors['Flatten']
+                add_activation = False
+                
+            elif isinstance(layer, layers.Dense):
+                dense_count += 1
+                calc_text = (
+                    f'Input size: {layer.input_shape[1]}\n'
+                    f'Output size: {layer.units}\n'
+                    f'Parameters: {layer.input_shape[1]}×{layer.units} + {layer.units}'
+                )
+                label = f'{layer_type}\n{layer.units} units'
+                color = layer_colors['Dense']
+                if dense_count < sum(1 for l in model.layers if isinstance(l, layers.Dense)):
+                    add_activation = True
+                    activation_type = 'ReLU'
+                else:
+                    add_activation = True
+                    activation_type = 'Softmax'
+            
+            # Create a subgraph to keep layer and its calculation at same rank
+            with dot.subgraph(name=f'cluster_{node_counter}') as cluster:
+                cluster.attr(rank='same', style='invis')  # Make cluster invisible
+                
+                # Add layer node
+                cluster.node(layer_name, 
+                           label,
+                           shape='box',
+                           style='filled',
+                           fillcolor=color,
+                           width='3.0',        
+                           height='1.3')       
+                
+                # Add calculation node                
+                cluster.node(calc_name,
+                           calc_text,
+                           shape='note',
+                           style='filled,dashed',
+                           fillcolor=layer_colors['Calculation'],
+                           fontname='Courier',
+                           fontsize='14',
+                           margin='0.2',       # Reduced margin from 14
+                           width='3.0',        # Reduced width  from 4.0
+                           height='1.2')
+                
+                # Invisible edge to force calculation node to the right
+                cluster.edge(layer_name, calc_name, 
+                           style='dashed', 
+                           constraint='false', 
+                           color='#666666',
+                           dir='none') 
+            
+            # Connect main flow
+            dot.edge(prev_node, layer_name, penwidth='2.0')
+            
+            # Add activation if needed
+            if add_activation:
+                activation_name = f'activation_{node_counter}'
+                dot.node(activation_name,
+                        activation_type,
+                        shape='ellipse',
+                        style='filled',
+                        fillcolor=layer_colors[activation_type],
+                        width='1.5',
+                        height='0.8')
+                
+                dot.edge(layer_name, activation_name, penwidth='2.0')
+                prev_node = activation_name
+                
+                # Add output layer after the last softmax
+                if activation_type == 'Softmax':
+                    output_name = f'output_{node_counter}'
+                    dot.node(output_name,
+                           f'Output\n{output_shape[-1]} classes',
+                           shape='box',
+                           style='filled',
+                           fillcolor=layer_colors['Output'],
+                           width='2.5',
+                           height='1.2')
+                    dot.edge(activation_name, output_name, penwidth='2.0')
             else:
-                return f'[Shape: unchanged]\\n[Params: {params}]'
-        elif len(prev_shape) == 3 and len(curr_shape) == 1:
-            return f'[Flatten: {prev_shape[0]}*{prev_shape[1]}*{prev_shape[2]}={curr_shape[0]}]'
-        elif len(prev_shape) == 1 and len(curr_shape) == 1:
-            return f'[Params: {prev_shape[0]}*{curr_shape[0]}+{curr_shape[0]}={params}]'
-        else:
-            return ''
-
-    # Add input shape node
-    dot.node('input', f'Input\\n{model.input_shape[1:]}', shape='box', style='filled', fillcolor='white')
-
-    prev_node = 'input'
-    input_shape = model.input_shape[1:]
-    for i, layer in enumerate(model.layers):
-        with dot.subgraph(name=f'cluster_{i}') as c:
-            c.attr(style='filled', color='lightgrey')
-            layer_name = f'layer_{i}'
-            try:
-                layer_label, output_shape, color, params = add_layer(layer, i, input_shape)
-            except Exception as e:
-                layer_label = f"Layer {i}\\n(Error: {str(e)})"
-                output_shape = input_shape
-                color = 'red'
-                params = 0
-            c.node(layer_name, label=layer_label, shape='box', style='filled,rounded', 
-                   fillcolor=color, width='2', height='0.8',
-                   fontname='Arial', fontsize='10')
+                prev_node = layer_name
             
-            if isinstance(layer, (layers.Conv2D, layers.Dense)) and i < len(model.layers) - 1:
-                relu_name = f'relu_{i}'
-                c.node(relu_name, "ReLU", shape='ellipse', style='filled', 
-                       fillcolor='lightsalmon', width='1.5', height='0.5', 
-                       fontname='Arial', fontsize='10')
-                c.edge(layer_name, relu_name)
-                last_node = relu_name
-            else:
-                last_node = layer_name
-            
-            edge_info = edge_label(input_shape, output_shape, params)
-            # Adjusted edge label positioning
-            dot.edge(prev_node, layer_name, label=edge_info, fontsize='8', 
-                     labelangle='270', labeldistance='1.5', 
-                     labeljust='l', tailport='s', headport='n')
-            
-            prev_node = last_node
-            input_shape = output_shape
+            node_counter += 1
+        
+        return dot
+    except Exception as e:
+        return None    
+    
+def main():
+    st.title("Dynamic CNN Model Architecture")
 
-    return dot
+    # Sidebar configurations
+    st.sidebar.title("Configure CNN Model")
 
-st.title("Improved CNN Model Architecture Visualizer")
+    # Common image sizes in computer vision
+    image_size_options = {
+        "16x16": (16, 16),
+        "28x28": (28, 28),  # MNIST size
+        "32x32": (32, 32),  # CIFAR-10 size
+        "64x64": (64, 64),
+        "96x96": (96, 96),
+        "128x128": (128, 128),
+        "224x224": (224, 224),  # ImageNet typical size
+        "256x256": (256, 256)
+    }
 
-st.sidebar.title("Configure CNN Model")
-
-# Input shape options
-input_shape_options = {
-    '16x16': (16, 16, 3),
-    '32x32': (32, 32, 3),
-    '64x64': (64, 64, 3),
-    '128x128': (128, 128, 3),
-    '224x224': (224, 224, 3)  # Common for transfer learning models
-}
-selected_input_shape = st.sidebar.selectbox("Select Input Shape", list(input_shape_options.keys()))
-input_shape = input_shape_options[selected_input_shape]
-
-num_conv_layers = st.sidebar.slider("Number of Conv Layers", min_value=1, max_value=5, value=2)
-
-kernel_size_options = ['1x1', '3x3', '5x5', '7x7']
-
-filters_list = []
-kernel_sizes = []
-for i in range(num_conv_layers):
+    # Input configuration
+    st.sidebar.subheader("Input Configuration")
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        filters = st.slider(f"Conv Layer {i+1} Filters", min_value=16, max_value=64, step=8, value=32)
-        filters_list.append(filters)
+        image_size = st.selectbox(
+            "Input Image Size",
+            options=list(image_size_options.keys()),
+            index=2
+        )
     with col2:
-        kernel_size = st.selectbox(f"Kernel Size {i+1}", kernel_size_options, index=1)
-        kernel_sizes.append(tuple(map(int, kernel_size.split('x'))))
+        channels = st.selectbox(
+            "Color Channels",
+            options=["Grayscale (1)", "RGB (3)"],
+            index=0
+        )
 
-num_dense_layers = st.sidebar.slider("Number of Dense Layers (including output)", min_value=1, max_value=3, value=2)
-dense_units_list = [st.sidebar.slider(f"Dense Layer {i+1} Units", min_value=32, max_value=128, step=16, value=64) for i in range(num_dense_layers - 1)]
+    # Convert selections to numeric values
+    height, width = image_size_options[image_size]
+    num_channels = 1 if "Grayscale" in channels else 3
+    input_shape = (height, width, num_channels)
 
-num_classes = st.sidebar.slider("Number of Output Classes", min_value=2, max_value=100, value=10)
+    # Warning for large architectures
+    if height * width > 128 * 128:
+        st.sidebar.warning("⚠️ Large input sizes may result in higher computational requirements.")
 
-try:
-    cnn_model = create_dynamic_cnn_model(input_shape=input_shape, num_conv_layers=num_conv_layers, 
-                                         filters_list=filters_list, kernel_sizes=kernel_sizes,
-                                         num_dense_layers=num_dense_layers, 
-                                         dense_units_list=dense_units_list, num_classes=num_classes)
+    # Model configuration
+    num_conv_layers = st.sidebar.slider("Number of Conv Layers", min_value=1, max_value=5, value=2)
+    kernel_size_options = ['1x1', '3x3', '5x5', '7x7']
 
-    st.subheader("Model Summary")
-    model_summary = []
-    cnn_model.summary(print_fn=lambda x: model_summary.append(x))
-    st.text("\n".join(model_summary))
+    filters_list = []
+    kernel_sizes = []
+    for i in range(num_conv_layers):
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            filters = st.slider(f"Conv Layer {i+1} Filters", min_value=16, max_value=64, step=8, value=32)
+            filters_list.append(filters)
+        with col2:
+            kernel_size = st.selectbox(f"Kernel Size {i+1}", kernel_size_options, index=1)
+            kernel_sizes.append(tuple(map(int, kernel_size.split('x'))))
 
-    st.subheader("Model Architecture")
-    dot = model_to_graphviz(cnn_model)
-    st.graphviz_chart(dot, use_container_width=True)
+    num_dense_layers = st.sidebar.slider("Number of Dense Layers (including output)", min_value=1, max_value=3, value=2)
+    dense_units_list = [st.sidebar.slider(f"Dense Layer {i+1} Units", min_value=32, max_value=128, step=16, value=64) 
+                        for i in range(num_dense_layers - 1)]
 
-    st.write("")
-    st.write("")
+    num_classes = st.sidebar.slider("Number of Output Classes", min_value=2, max_value=100, value=10)
 
-    st.subheader("Model Explanation")
-    st.write(f"""
-    This improved Convolutional Neural Network (CNN) model visualization includes:
+    try:
+        # Create the model
+        cnn_model = create_dynamic_cnn_model(
+            input_shape=input_shape,
+            num_conv_layers=num_conv_layers,
+            filters_list=filters_list,
+            kernel_sizes=kernel_sizes,
+            num_dense_layers=num_dense_layers,
+            dense_units_list=dense_units_list,
+            num_classes=num_classes
+        )
 
-    1. Input Layer: Accepts images of size {input_shape[0]}x{input_shape[1]} pixels with {input_shape[2]} channels.
-    2. Convolutional Layers: {num_conv_layers} layer(s), each followed by ReLU activation and max pooling.
-       - Kernel sizes and filter counts are configurable for each layer.
-       - Output shapes and parameter counts are displayed for each layer.
-    3. Flatten Layer: Converts the 2D feature maps to a 1D vector.
-    4. Dense Layers: {num_dense_layers - 1} fully connected layer(s) with ReLU activation.
-    5. Output Layer: Dense layer with {num_classes} units and softmax activation for {num_classes}-class classification.
+        # Get total parameters
+        total_params = cnn_model.count_params()
+    
+        # Display the model summary with parameter count
+        st.subheader(f"Model Summary (Total Parameters: {total_params:,})")
+        format_model_summary(cnn_model)
 
-    Color Coding:
-    - White: Input layer
-    - Light Blue: Convolutional layers
-    - Orange: Max Pooling layers
-    - Light Salmon: ReLU activation
-    - Light Yellow: Dense layers
+        # Display the model architecture
+        st.subheader("Model Architecture")
+        
+        # Create graph 
+        dot = model_to_graphviz(cnn_model)
+        
+    
+        if dot is not None:
+            # Display the graph
+            st.graphviz_chart(dot)
+            
+            # Create buttons in two columns
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Download DOT file
+                st.download_button(
+                    label="Download Graph (DOT)",
+                    data=dot.source,
+                    file_name="cnn_architecture.dot",
+                    mime="text/plain",
+                )
+            
+            with col2:
+                # Download PNG file
+                try:
+                    # Render the graph to PNG
+                    png_data = dot.pipe(format='png')
+                    
+                    # Add download button for PNG
+                    st.download_button(
+                        label="Download Graph (PNG)",
+                        data=png_data,
+                        file_name="cnn_architecture.png",
+                        mime="image/png",
+                    )
+                except Exception as e:
+                    st.error(f"Could not create PNG: {str(e)}")
 
-    Computation Details:
-    - Shape changes are shown between layers, e.g., [Shape: 32/2=16] for max pooling.
-    - Parameter calculations are displayed, e.g., [Params: 288] for convolutional layers.
 
-    Formulas:
-    1. Convolutional Layer Parameters: 
-       (kernel_height * kernel_width * input_channels * num_filters) + num_filters
-    2. Dense Layer Parameters: 
-       (input_features * output_features) + output_features
-    3. Max Pooling Shape: 
-       new_height = height / pool_size, new_width = width / pool_size
+            # Add help text in sidebar
+            with st.sidebar.expander("ℹ️ About Input Sizes"):
+                st.write("""
+                - **16x16**: Tiny images, good for simple patterns
+                - **28x28**: MNIST digit classification size
+                - **32x32**: CIFAR-10 dataset size
+                - **64x64**: Good balance for medium complexity
+                - **96x96**: Higher detail, moderate memory usage
+                - **128x128**: Detailed images, higher memory usage
+                - **224x224**: Standard ImageNet size
+                - **256x256**: High resolution, requires more computing power
+                
+                Choose based on your:
+                - Dataset characteristics
+                - Available computational resources
+                - Required level of detail
+                """)
+        else:
+            st.error("Failed to create visualization")
 
-    The visualization provides a detailed understanding of the model's architecture, shape changes, and parameter computations between layers.
-    """)
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
 
-except Exception as e:
-    st.error(f"An error occurred while creating the model: {str(e)}")
-    st.error("Please try adjusting the model parameters or check the console for more details.")
+if __name__ == "__main__":
+    main()
