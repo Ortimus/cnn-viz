@@ -142,13 +142,25 @@ def model_to_graphviz(model):
         
         node_counter = 0
         
-        # Add input layer
-        input_shape = model.input_shape
-        channels_text = "RGB" if input_shape[3] == 3 else "Grayscale"
+        # Add input layer using the first layer's input shape
+        input_shape = model.layers[0].input_shape
+        if isinstance(input_shape, tuple):
+            # Single input shape
+            channels = input_shape[-1] if len(input_shape) == 4 else 1
+            height = input_shape[1]
+            width = input_shape[2]
+        else:
+            # Handle the case where input_shape might be a list of shapes
+            input_shape = input_shape[0]  # Take the first shape
+            channels = input_shape[-1] if len(input_shape) == 4 else 1
+            height = input_shape[1]
+            width = input_shape[2]
+            
+        channels_text = "RGB" if channels == 3 else "Grayscale"
         input_name = f'layer_{node_counter}'
         
         dot.node(input_name,
-                f'Input\n{input_shape[1]}x{input_shape[2]}x{input_shape[3]}\n{channels_text}',
+                f'Input\n{height}x{width}x{channels}\n{channels_text}',
                 shape='box',
                 style='filled',
                 fillcolor=layer_colors['Input'],
@@ -163,7 +175,12 @@ def model_to_graphviz(model):
             layer_type = layer.__class__.__name__
             layer_name = f'layer_{node_counter}'
             calc_name = f'calc_{node_counter}'
-            output_shape = layer.get_output_shape_at(0)
+            
+            # Handle output shape based on layer type
+            if isinstance(layer, tf.keras.layers.InputLayer):
+                output_shape = layer.input_shape
+            else:
+                output_shape = layer.get_output_shape_at(0)
             
             # Default values in case none of the conditions match
             calc_text = ""
@@ -220,6 +237,10 @@ def model_to_graphviz(model):
                     add_activation = True
                     activation_type = 'Softmax'
             
+            # Skip InputLayer in the visualization since we already handled it
+            if isinstance(layer, tf.keras.layers.InputLayer):
+                continue
+                
             # Create a subgraph to keep layer and its calculation at same rank
             with dot.subgraph(name=f'cluster_{node_counter}') as cluster:
                 cluster.attr(rank='same', style='invis')  # Make cluster invisible
@@ -293,7 +314,24 @@ def model_to_graphviz(model):
         print(f"Error details: {error_details}")
         st.error(f"Visualization error: {str(e)}")
         return None
-
+    
+def get_layer_shape(layer, shape_type='output'):
+    """Helper function to get layer shape safely"""
+    try:
+        if shape_type == 'output':
+            if hasattr(layer, 'output_shape'):
+                return layer.output_shape
+            else:
+                return layer.get_output_shape_at(0)
+        else:  # input shape
+            if hasattr(layer, 'input_shape'):
+                return layer.input_shape
+            else:
+                return layer.get_input_shape_at(0)
+    except Exception as e:
+        print(f"Error getting shape for layer {layer.__class__.__name__}: {str(e)}")
+        return None
+    
 def main():
     st.title("Dynamic CNN Model Architecture")
 
@@ -332,6 +370,7 @@ def main():
     height, width = image_size_options[image_size]
     num_channels = 1 if "Grayscale" in channels else 3
     input_shape = (height, width, num_channels)
+
 
     # Warning for large architectures
     if height * width > 128 * 128:
