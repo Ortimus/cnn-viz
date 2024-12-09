@@ -105,6 +105,43 @@ def format_model_summary(model):
         })
     )
 
+def get_layer_shape(layer, shape_type='output'):
+    """Helper function to get layer shape safely using Keras API"""
+    try:
+        config = layer.get_config()
+        
+        if shape_type == 'input':
+            # Try different ways to get input shape
+            if isinstance(layer, tf.keras.layers.InputLayer):
+                return config.get('batch_input_shape')
+            elif hasattr(layer, '_build_input_shape'):
+                return layer._build_input_shape
+            elif hasattr(layer, 'input_shape'):
+                return layer.input_shape
+            return None
+        else:  # output shape
+            if isinstance(layer, tf.keras.layers.Dense):
+                return (None, config.get('units'))
+            elif isinstance(layer, tf.keras.layers.Conv2D):
+                input_shape = layer.input_shape
+                return (input_shape[0], input_shape[1], input_shape[2], config.get('filters'))
+            elif isinstance(layer, tf.keras.layers.MaxPooling2D):
+                input_shape = layer.input_shape
+                pool_size = config.get('pool_size', (2, 2))
+                return (input_shape[0], input_shape[1]//pool_size[0], input_shape[2]//pool_size[1], input_shape[3])
+            elif isinstance(layer, tf.keras.layers.Flatten):
+                input_shape = layer.input_shape
+                if len(input_shape) == 4:
+                    flattened_size = input_shape[1] * input_shape[2] * input_shape[3]
+                else:
+                    flattened_size = input_shape[1]
+                return (None, flattened_size)
+            return layer.input_shape
+            
+    except Exception as e:
+        print(f"Error getting shape for layer {layer.__class__.__name__}: {str(e)}")
+        return None
+
 def model_to_graphviz(model):
     try:
         dot = graphviz.Digraph(engine='dot', format='png')
@@ -122,7 +159,7 @@ def model_to_graphviz(model):
             'size': '45,40',        # Wide and tall fixed size
             'margin': '0.5'
         })
-
+        
         layer_colors = {
             'Input': '#E1F5E1',
             'Conv2D': '#E6F3FF',
@@ -141,8 +178,8 @@ def model_to_graphviz(model):
                 margin='0.4')
         
         node_counter = 0
-
-        # Handle input shape differently
+        
+        # Handle input shape from model directly
         model_input = model.input_shape
         if isinstance(model_input, tuple):
             height, width = model_input[1:3]
@@ -153,7 +190,6 @@ def model_to_graphviz(model):
             
         channels_text = "RGB" if channels == 3 else "Grayscale"
         input_name = f'layer_{node_counter}'
-
         
         dot.node(input_name,
                 f'Input\n{height}x{width}x{channels}\n{channels_text}',
@@ -172,11 +208,17 @@ def model_to_graphviz(model):
             layer_name = f'layer_{node_counter}'
             calc_name = f'calc_{node_counter}'
             
+            # Skip InputLayer since we handled input separately
+            if isinstance(layer, tf.keras.layers.InputLayer):
+                continue
+                
             # Get shapes using helper method
             input_shape = get_layer_shape(layer, 'input')
             output_shape = get_layer_shape(layer, 'output')
             
-            if not input_shape or not output_shape:
+            # Skip if we can't get valid shapes
+            if input_shape is None or output_shape is None:
+                print(f"Skipping layer {layer_type} due to missing shape information")
                 continue
             
             # Default values
@@ -233,13 +275,9 @@ def model_to_graphviz(model):
                     add_activation = True
                     activation_type = 'Softmax'
             
-            # Skip InputLayer since we handled it separately
-            if isinstance(layer, tf.keras.layers.InputLayer):
-                continue
-                
             # Create a subgraph to keep layer and its calculation at same rank
             with dot.subgraph(name=f'cluster_{node_counter}') as cluster:
-                cluster.attr(rank='same', style='invis')
+                cluster.attr(rank='same', style='invis')  # Make cluster invisible
                 
                 # Add layer node
                 cluster.node(layer_name, 
@@ -247,7 +285,7 @@ def model_to_graphviz(model):
                            shape='box',
                            style='filled',
                            fillcolor=color,
-                           width='3.0',
+                           width='3.0',     # Made wider
                            height='1.3')
                 
                 # Add calculation node if there is calculation text
@@ -260,7 +298,7 @@ def model_to_graphviz(model):
                                fontname='Courier',
                                fontsize='14',
                                margin='0.2',
-                               width='3.0',
+                               width='3.0',    # Made less wide
                                height='1.2')
                     
                     # Connect with dashed line without arrow
@@ -311,41 +349,6 @@ def model_to_graphviz(model):
         st.error(f"Visualization error: {str(e)}")
         return None
 
-def get_layer_shape(layer, shape_type='output'):
-    """Helper function to get layer shape safely using Keras API"""
-    try:
-        config = layer.get_config()
-        
-        if shape_type == 'input':
-            # Try different ways to get input shape
-            if isinstance(layer, tf.keras.layers.InputLayer):
-                return config.get('batch_input_shape')
-            elif hasattr(layer, '_build_input_shape'):
-                return layer._build_input_shape
-            elif hasattr(layer, 'input_shape'):
-                return layer.input_shape
-            return None
-        else:  # output shape
-            if isinstance(layer, tf.keras.layers.Dense):
-                return (None, config.get('units'))
-            elif isinstance(layer, tf.keras.layers.Conv2D):
-                input_shape = layer.input_shape
-                return (input_shape[0], input_shape[1], input_shape[2], config.get('filters'))
-            elif isinstance(layer, tf.keras.layers.MaxPooling2D):
-                input_shape = layer.input_shape
-                pool_size = config.get('pool_size', (2, 2))
-                return (input_shape[0], input_shape[1]//pool_size[0], input_shape[2]//pool_size[1], input_shape[3])
-            elif isinstance(layer, tf.keras.layers.Flatten):
-                input_shape = layer.input_shape
-                flattened_size = input_shape[1] * input_shape[2] * input_shape[3] if len(input_shape) == 4 else input_shape[1]
-                return (None, flattened_size)
-            return layer.input_shape
-            
-    except Exception as e:
-        print(f"Error getting shape for layer {layer.__class__.__name__}: {str(e)}")
-        return None
-
-    
 def main():
     st.title("Dynamic CNN Model Architecture")
 
