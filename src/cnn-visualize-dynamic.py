@@ -317,32 +317,44 @@ def model_to_graphviz(model):
         st.error(f"Visualization error: {str(e)}")
         return None
 
-
+    
 def get_layer_shape(layer, shape_type='output'):
-    """Helper function to get layer shape safely"""
+    """Helper function to get layer shape safely using Keras API"""
     try:
-        # First try direct attribute access
+        if isinstance(layer, tf.keras.layers.InputLayer):
+            # For input layer, both input and output shape are the same
+            return layer.get_config().get('batch_input_shape')
+            
         if shape_type == 'output':
-            if hasattr(layer, 'output_shape'):
-                return layer.output_shape
-            else:
-                return layer.get_output_shape_at(0)
+            # Try multiple methods to get output shape
+            if hasattr(layer, '_output_shape'):
+                return layer._output_shape
+            elif hasattr(layer, 'compute_output_shape'):
+                return layer.compute_output_shape(layer.input_shape)
+            elif hasattr(layer, 'get_config'):
+                config = layer.get_config()
+                if 'units' in config:  # Dense layer
+                    return (None, config['units'])
+                elif 'filters' in config:  # Conv layer
+                    return layer.input_shape[:-1] + (config['filters'],)
+            return layer.input_shape  # Fallback for layers that don't change shape
+            
         else:  # input shape
             if hasattr(layer, 'input_shape'):
                 return layer.input_shape
-            else:
-                return layer.get_input_shape_at(0)
+            elif hasattr(layer, 'get_config'):
+                config = layer.get_config()
+                return config.get('batch_input_shape')
+            return None
+            
     except Exception as e:
-        # Fallback to config
-        try:
-            config = layer.get_config()
-            if shape_type == 'input' and 'batch_input_shape' in config:
-                return config['batch_input_shape']
-        except:
-            pass
-        
         print(f"Error getting shape for layer {layer.__class__.__name__}: {str(e)}")
+        if shape_type == 'input' and hasattr(layer, 'input_shape'):
+            return layer.input_shape
+        elif shape_type == 'output' and hasattr(layer, 'output_shape'):
+            return layer.output_shape
         return None
+
     
 def main():
     st.title("Dynamic CNN Model Architecture")
