@@ -122,7 +122,7 @@ def model_to_graphviz(model):
             'size': '45,40',        # Wide and tall fixed size
             'margin': '0.5'
         })
-        
+
         layer_colors = {
             'Input': '#E1F5E1',
             'Conv2D': '#E6F3FF',
@@ -141,25 +141,19 @@ def model_to_graphviz(model):
                 margin='0.4')
         
         node_counter = 0
-        
-        # Add input layer using the helper method
-        first_layer = model.layers[0]
-        input_shape = get_layer_shape(first_layer, 'input')
-        
-        if input_shape:
-            if isinstance(input_shape, (tuple, list)):
-                shape = input_shape[0] if isinstance(input_shape, list) else input_shape
-                if len(shape) >= 4:
-                    height, width, channels = shape[1:4]
-                else:
-                    height, width, channels = shape[1], shape[1], 1
-            else:
-                height, width, channels = 32, 32, 1
+
+        # Handle input shape differently
+        model_input = model.input_shape
+        if isinstance(model_input, tuple):
+            height, width = model_input[1:3]
+            channels = model_input[3]
         else:
-            height, width, channels = 32, 32, 1
+            height, width = model_input[0][1:3]
+            channels = model_input[0][3]
             
         channels_text = "RGB" if channels == 3 else "Grayscale"
         input_name = f'layer_{node_counter}'
+
         
         dot.node(input_name,
                 f'Input\n{height}x{width}x{channels}\n{channels_text}',
@@ -317,42 +311,38 @@ def model_to_graphviz(model):
         st.error(f"Visualization error: {str(e)}")
         return None
 
-    
 def get_layer_shape(layer, shape_type='output'):
     """Helper function to get layer shape safely using Keras API"""
     try:
-        if isinstance(layer, tf.keras.layers.InputLayer):
-            # For input layer, both input and output shape are the same
-            return layer.get_config().get('batch_input_shape')
-            
-        if shape_type == 'output':
-            # Try multiple methods to get output shape
-            if hasattr(layer, '_output_shape'):
-                return layer._output_shape
-            elif hasattr(layer, 'compute_output_shape'):
-                return layer.compute_output_shape(layer.input_shape)
-            elif hasattr(layer, 'get_config'):
-                config = layer.get_config()
-                if 'units' in config:  # Dense layer
-                    return (None, config['units'])
-                elif 'filters' in config:  # Conv layer
-                    return layer.input_shape[:-1] + (config['filters'],)
-            return layer.input_shape  # Fallback for layers that don't change shape
-            
-        else:  # input shape
-            if hasattr(layer, 'input_shape'):
-                return layer.input_shape
-            elif hasattr(layer, 'get_config'):
-                config = layer.get_config()
+        config = layer.get_config()
+        
+        if shape_type == 'input':
+            # Try different ways to get input shape
+            if isinstance(layer, tf.keras.layers.InputLayer):
                 return config.get('batch_input_shape')
+            elif hasattr(layer, '_build_input_shape'):
+                return layer._build_input_shape
+            elif hasattr(layer, 'input_shape'):
+                return layer.input_shape
             return None
+        else:  # output shape
+            if isinstance(layer, tf.keras.layers.Dense):
+                return (None, config.get('units'))
+            elif isinstance(layer, tf.keras.layers.Conv2D):
+                input_shape = layer.input_shape
+                return (input_shape[0], input_shape[1], input_shape[2], config.get('filters'))
+            elif isinstance(layer, tf.keras.layers.MaxPooling2D):
+                input_shape = layer.input_shape
+                pool_size = config.get('pool_size', (2, 2))
+                return (input_shape[0], input_shape[1]//pool_size[0], input_shape[2]//pool_size[1], input_shape[3])
+            elif isinstance(layer, tf.keras.layers.Flatten):
+                input_shape = layer.input_shape
+                flattened_size = input_shape[1] * input_shape[2] * input_shape[3] if len(input_shape) == 4 else input_shape[1]
+                return (None, flattened_size)
+            return layer.input_shape
             
     except Exception as e:
         print(f"Error getting shape for layer {layer.__class__.__name__}: {str(e)}")
-        if shape_type == 'input' and hasattr(layer, 'input_shape'):
-            return layer.input_shape
-        elif shape_type == 'output' and hasattr(layer, 'output_shape'):
-            return layer.output_shape
         return None
 
     
