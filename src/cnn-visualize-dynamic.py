@@ -42,24 +42,31 @@ def format_model_summary(model):
     dense_layers = len([layer for layer in model.layers if isinstance(layer, tf.keras.layers.Dense)])
     current_dense = 0
     
-    # Add input layer more safely
-    input_shape = model.layers[0].input_shape
-    if input_shape:
-        if isinstance(input_shape, tuple):
-            shape_str = str(input_shape)
-        elif isinstance(input_shape, list):
-            shape_str = str(input_shape[0])
+    # Get input shape more robustly
+    try:
+        # Try different methods to get input shape
+        if hasattr(model, 'input_shape'):
+            input_shape = model.input_shape
+        elif hasattr(model, 'input'):
+            input_shape = model.input.shape
         else:
-            shape_str = "unknown"
-    else:
-        shape_str = "unknown"
+            # Parse from the summary text
+            input_line = stringlist[1]  # First line after Model summary
+            if 'input_shape' in input_line.lower():
+                input_shape = input_line.split(':')[-1].strip()
+            else:
+                input_shape = "unknown"
+    except Exception as e:
+        print(f"Error getting input shape: {e}")
+        input_shape = "unknown"
         
     layers_list.append({
         'Layer Type': '(Input)',
-        'Output Shape': shape_str,
+        'Output Shape': str(input_shape),
         'Activation': 'None',
         'Parameters': 0
     })
+    
     
     # Parse each layer from the model directly
     for layer in model.layers:
