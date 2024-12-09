@@ -142,19 +142,21 @@ def model_to_graphviz(model):
         
         node_counter = 0
         
-        # Add input layer using the first layer's input shape
-        input_shape = model.layers[0].input_shape
-        if isinstance(input_shape, tuple):
-            # Single input shape
-            channels = input_shape[-1] if len(input_shape) == 4 else 1
-            height = input_shape[1]
-            width = input_shape[2]
+        # Add input layer using the helper method
+        first_layer = model.layers[0]
+        input_shape = get_layer_shape(first_layer, 'input')
+        
+        if input_shape:
+            if isinstance(input_shape, (tuple, list)):
+                shape = input_shape[0] if isinstance(input_shape, list) else input_shape
+                if len(shape) >= 4:
+                    height, width, channels = shape[1:4]
+                else:
+                    height, width, channels = shape[1], shape[1], 1
+            else:
+                height, width, channels = 32, 32, 1
         else:
-            # Handle the case where input_shape might be a list of shapes
-            input_shape = input_shape[0]  # Take the first shape
-            channels = input_shape[-1] if len(input_shape) == 4 else 1
-            height = input_shape[1]
-            width = input_shape[2]
+            height, width, channels = 32, 32, 1
             
         channels_text = "RGB" if channels == 3 else "Grayscale"
         input_name = f'layer_{node_counter}'
@@ -176,25 +178,25 @@ def model_to_graphviz(model):
             layer_name = f'layer_{node_counter}'
             calc_name = f'calc_{node_counter}'
             
-            # Handle output shape based on layer type
-            if isinstance(layer, tf.keras.layers.InputLayer):
-                output_shape = layer.input_shape
-            else:
-                output_shape = layer.get_output_shape_at(0)
+            # Get shapes using helper method
+            input_shape = get_layer_shape(layer, 'input')
+            output_shape = get_layer_shape(layer, 'output')
             
-            # Default values in case none of the conditions match
+            if not input_shape or not output_shape:
+                continue
+            
+            # Default values
             calc_text = ""
             label = layer_type
-            color = '#FFFFFF'  # Default white
+            color = '#FFFFFF'
             add_activation = False
             activation_type = None
             
-            # Create calculation box first
             if isinstance(layer, layers.Conv2D):
                 calc_text = (
-                    f'Input: {layer.input_shape[1]}×{layer.input_shape[2]}×{layer.input_shape[3]}\n'
+                    f'Input: {input_shape[1]}×{input_shape[2]}×{input_shape[3]}\n'
                     f'Kernel: {layer.kernel_size[0]}×{layer.kernel_size[1]}, Filters: {layer.filters}\n'
-                    f'Parameters: {layer.input_shape[3]}×{layer.kernel_size[0]}×{layer.kernel_size[1]}×{layer.filters} + {layer.filters}\n'
+                    f'Parameters: {input_shape[3]}×{layer.kernel_size[0]}×{layer.kernel_size[1]}×{layer.filters} + {layer.filters}\n'
                     f'Output: {output_shape[1]}×{output_shape[2]}×{output_shape[3]}'
                 )
                 label = f'{layer_type}\n{layer.filters} filters\n{layer.kernel_size[0]}x{layer.kernel_size[1]}'
@@ -204,7 +206,7 @@ def model_to_graphviz(model):
                 
             elif isinstance(layer, layers.MaxPooling2D):
                 calc_text = (
-                    f'Input: {layer.input_shape[1]}×{layer.input_shape[2]}×{layer.input_shape[3]}\n'
+                    f'Input: {input_shape[1]}×{input_shape[2]}×{input_shape[3]}\n'
                     f'Pool size: 2×2, Stride: 2\n'
                     f'Output: {output_shape[1]}×{output_shape[2]}×{output_shape[3]}'
                 )
@@ -214,7 +216,7 @@ def model_to_graphviz(model):
                 
             elif isinstance(layer, layers.Flatten):
                 calc_text = (
-                    f'Input: {layer.input_shape[1]}×{layer.input_shape[2]}×{layer.input_shape[3]}\n'
+                    f'Input: {input_shape[1]}×{input_shape[2]}×{input_shape[3]}\n'
                     f'Output: {output_shape[1]} (flattened)'
                 )
                 label = f'{layer_type}'
@@ -224,9 +226,9 @@ def model_to_graphviz(model):
             elif isinstance(layer, layers.Dense):
                 dense_count += 1
                 calc_text = (
-                    f'Input size: {layer.input_shape[1]}\n'
+                    f'Input size: {input_shape[1]}\n'
                     f'Output size: {layer.units}\n'
-                    f'Parameters: {layer.input_shape[1]}×{layer.units} + {layer.units}'
+                    f'Parameters: {input_shape[1]}×{layer.units} + {layer.units}'
                 )
                 label = f'{layer_type}\n{layer.units} units'
                 color = layer_colors['Dense']
@@ -237,13 +239,13 @@ def model_to_graphviz(model):
                     add_activation = True
                     activation_type = 'Softmax'
             
-            # Skip InputLayer in the visualization since we already handled it
+            # Skip InputLayer since we handled it separately
             if isinstance(layer, tf.keras.layers.InputLayer):
                 continue
                 
             # Create a subgraph to keep layer and its calculation at same rank
             with dot.subgraph(name=f'cluster_{node_counter}') as cluster:
-                cluster.attr(rank='same', style='invis')  # Make cluster invisible
+                cluster.attr(rank='same', style='invis')
                 
                 # Add layer node
                 cluster.node(layer_name, 
@@ -251,7 +253,7 @@ def model_to_graphviz(model):
                            shape='box',
                            style='filled',
                            fillcolor=color,
-                           width='3.0',     # Made wider
+                           width='3.0',
                            height='1.3')
                 
                 # Add calculation node if there is calculation text
@@ -264,9 +266,9 @@ def model_to_graphviz(model):
                                fontname='Courier',
                                fontsize='14',
                                margin='0.2',
-                               width='3.0',    # Made less wide
+                               width='3.0',
                                height='1.2')
-                
+                    
                     # Connect with dashed line without arrow
                     cluster.edge(layer_name, calc_name, 
                                style='dashed', 
@@ -314,10 +316,12 @@ def model_to_graphviz(model):
         print(f"Error details: {error_details}")
         st.error(f"Visualization error: {str(e)}")
         return None
-    
+
+
 def get_layer_shape(layer, shape_type='output'):
     """Helper function to get layer shape safely"""
     try:
+        # First try direct attribute access
         if shape_type == 'output':
             if hasattr(layer, 'output_shape'):
                 return layer.output_shape
@@ -329,6 +333,14 @@ def get_layer_shape(layer, shape_type='output'):
             else:
                 return layer.get_input_shape_at(0)
     except Exception as e:
+        # Fallback to config
+        try:
+            config = layer.get_config()
+            if shape_type == 'input' and 'batch_input_shape' in config:
+                return config['batch_input_shape']
+        except:
+            pass
+        
         print(f"Error getting shape for layer {layer.__class__.__name__}: {str(e)}")
         return None
     
