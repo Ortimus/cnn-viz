@@ -42,11 +42,21 @@ def format_model_summary(model):
     dense_layers = len([layer for layer in model.layers if isinstance(layer, tf.keras.layers.Dense)])
     current_dense = 0
     
-    # Add input layer
-    input_shape = model.input_shape
+    # Add input layer more safely
+    input_shape = model.layers[0].input_shape
+    if input_shape:
+        if isinstance(input_shape, tuple):
+            shape_str = str(input_shape)
+        elif isinstance(input_shape, list):
+            shape_str = str(input_shape[0])
+        else:
+            shape_str = "unknown"
+    else:
+        shape_str = "unknown"
+        
     layers_list.append({
         'Layer Type': '(Input)',
-        'Output Shape': f'(None, {input_shape[1]}, {input_shape[2]}, {input_shape[3]})',
+        'Output Shape': shape_str,
         'Activation': 'None',
         'Parameters': 0
     })
@@ -63,15 +73,23 @@ def format_model_summary(model):
         else:
             activation = "None"
             
-        # Get the layer's output shape and parameters from the summary text
+        # Get layer info from summary text, but fall back to shape helper if needed
         layer_info = next((line for line in stringlist[2:-4] 
                           if line.strip() and layer_type in line), '')
         if layer_info:
-            parts = layer_info.strip().split()
-            output_shape = ' '.join(parts[1:-1])
-            params = int(parts[-1].replace(',', ''))
+            try:
+                parts = layer_info.strip().split()
+                output_shape = ' '.join(parts[1:-1])
+                params = int(parts[-1].replace(',', ''))
+            except (IndexError, ValueError):
+                # If parsing fails, use helper function
+                shape = get_layer_shape(layer, 'output')
+                output_shape = str(shape) if shape is not None else 'unknown'
+                params = layer.count_params()
         else:
-            output_shape = str(layer.output_shape)
+            # Use helper function if no summary text found
+            shape = get_layer_shape(layer, 'output')
+            output_shape = str(shape) if shape is not None else 'unknown'
             params = layer.count_params()
             
         layer_data = {
@@ -82,7 +100,7 @@ def format_model_summary(model):
         }
         layers_list.append(layer_data)
     
-    # Add total parameters row instead of output row
+    # Add total parameters row
     total_params = model.count_params()
     layers_list.append({
         'Layer Type': 'Total',
