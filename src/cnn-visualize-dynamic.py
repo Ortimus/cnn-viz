@@ -66,7 +66,7 @@ def format_model_summary(model):
         'Activation': 'None',
         'Parameters': 0
     })
-    
+
     
     # Parse each layer from the model directly
     for layer in model.layers:
@@ -169,6 +169,7 @@ def get_layer_shape(layer, shape_type='output'):
 
 def model_to_graphviz(model):
     try:
+        st.write("Starting graph creation...")
         dot = graphviz.Digraph(engine='dot', format='png')
         
         # Make the graph wider and adjust spacing
@@ -197,14 +198,10 @@ def model_to_graphviz(model):
             'Calculation': '#FFF8DC'  # Light yellow for calculations
         }
         
-        # Default node attributes
-        dot.attr('node', 
-                fontsize='16',
-                margin='0.4')
-        
         node_counter = 0
         
         # Handle input shape from model directly
+        st.write("Getting input shape...")
         model_input = model.input_shape
         if isinstance(model_input, tuple):
             height, width = model_input[1:3]
@@ -212,7 +209,8 @@ def model_to_graphviz(model):
         else:
             height, width = model_input[0][1:3]
             channels = model_input[0][3]
-            
+        
+        st.write(f"Input dimensions: {height}x{width}x{channels}")    
         channels_text = "RGB" if channels == 3 else "Grayscale"
         input_name = f'layer_{node_counter}'
         
@@ -227,23 +225,31 @@ def model_to_graphviz(model):
         prev_node = input_name
         node_counter += 1
         
+        st.write(f"\nTotal layers in model: {len(model.layers)}")
         dense_count = 0
+        
         for layer in model.layers:
+            st.write(f"\nProcessing layer {node_counter}: {layer.__class__.__name__}")
             layer_type = layer.__class__.__name__
             layer_name = f'layer_{node_counter}'
             calc_name = f'calc_{node_counter}'
             
             # Skip InputLayer since we handled input separately
             if isinstance(layer, tf.keras.layers.InputLayer):
+                st.write("Skipping InputLayer")
                 continue
                 
             # Get shapes using helper method
+            st.write("Getting shapes...")
             input_shape = get_layer_shape(layer, 'input')
             output_shape = get_layer_shape(layer, 'output')
             
+            st.write(f"Input shape: {input_shape}")
+            st.write(f"Output shape: {output_shape}")
+            
             # Skip if we can't get valid shapes
             if input_shape is None or output_shape is None:
-                print(f"Skipping layer {layer_type} due to missing shape information")
+                st.write(f"Skipping layer {layer_type} due to missing shape information")
                 continue
             
             # Default values
@@ -252,6 +258,8 @@ def model_to_graphviz(model):
             color = '#FFFFFF'
             add_activation = False
             activation_type = None
+            
+            st.write(f"Processing layer type: {layer_type}")
             
             if isinstance(layer, layers.Conv2D):
                 calc_text = (
@@ -300,6 +308,8 @@ def model_to_graphviz(model):
                     add_activation = True
                     activation_type = 'Softmax'
             
+            st.write(f"Creating nodes for layer {layer_type}")
+            
             # Create a subgraph to keep layer and its calculation at same rank
             with dot.subgraph(name=f'cluster_{node_counter}') as cluster:
                 cluster.attr(rank='same', style='invis')  # Make cluster invisible
@@ -336,6 +346,7 @@ def model_to_graphviz(model):
             # Connect main flow
             dot.edge(prev_node, layer_name, penwidth='2.0')
             
+            st.write(f"Adding activation: {add_activation}")
             # Add activation if needed
             if add_activation and activation_type:
                 activation_name = f'activation_{node_counter}'
@@ -365,12 +376,15 @@ def model_to_graphviz(model):
                 prev_node = layer_name
             
             node_counter += 1
+            st.write(f"Finished processing layer {layer_type}")
         
+        st.write("Graph creation completed")
         return dot
+        
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"Error details: {error_details}")
+        st.write(f"Error details: {error_details}")
         st.error(f"Visualization error: {str(e)}")
         return None
 
