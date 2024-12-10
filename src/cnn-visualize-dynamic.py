@@ -67,7 +67,6 @@ def format_model_summary(model):
         'Parameters': 0
     })
 
-    
     # Parse each layer from the model directly
     for layer in model.layers:
         layer_type = f"({layer.__class__.__name__})"
@@ -130,80 +129,74 @@ def format_model_summary(model):
         })
     )
 
-def get_layer_shape(layer, shape_type='output'):
-    """Helper function to get layer shape safely using Keras API"""
-    st.write(f"\nGetting {shape_type} shape for layer: {layer.__class__.__name__}")
+
+def calculate_conv_output_shape(input_shape, layer_config):
+    """Calculate Conv2D output shape based on input shape and layer config"""
+    if input_shape is None or len(input_shape) != 4:
+        return None
+    
+    padding = layer_config.get('padding', 'valid')
+    filters = layer_config.get('filters')
+    
+    if padding == 'same':
+        return (None, input_shape[1], input_shape[2], filters)
+    else:
+        kernel_size = layer_config.get('kernel_size')
+        if kernel_size:
+            h = input_shape[1] - kernel_size[0] + 1
+            w = input_shape[2] - kernel_size[1] + 1
+            return (None, h, w, filters)
+    return None
+
+def calculate_pool_output_shape(input_shape, layer_config):
+    """Calculate MaxPooling2D output shape"""
+    if input_shape is None or len(input_shape) != 4:
+        return None
+        
+    pool_size = layer_config.get('pool_size', (2, 2))
+    return (None, 
+            input_shape[1] // pool_size[0],
+            input_shape[2] // pool_size[1],
+            input_shape[3])
+
+def get_layer_shape(layer, shape_type='output', prev_layer_shape=None):
+    """Helper function to get layer shape safely"""
     try:
         config = layer.get_config()
-        st.write(f"Config: {config}")
+        st.write(f"Processing {layer.__class__.__name__} with previous shape: {prev_layer_shape}")
         
+        if isinstance(layer, tf.keras.layers.InputLayer):
+            shape = config.get('batch_input_shape')
+            return shape if shape else prev_layer_shape
+            
         if shape_type == 'input':
-            st.write("Trying input shape methods...")
-            # Try different ways to get input shape
-            if hasattr(layer, 'input_shape'):
-                st.write("Using input_shape attribute")
-                return layer.input_shape
-            elif hasattr(layer, '_build_input_shape'):
-                st.write("Using _build_input_shape attribute")
-                return layer._build_input_shape
-            elif 'batch_input_shape' in config:
-                st.write("Using batch_input_shape from config")
-                return config['batch_input_shape']
+            return prev_layer_shape
             
-            # Additional attempts for input shape
-            try:
-                st.write("Trying to get shape from layer build")
-                if hasattr(layer, '_built_input_shape'):
-                    return layer._built_input_shape
-                elif hasattr(layer, '_inbound_nodes') and layer._inbound_nodes:
-                    return layer._inbound_nodes[0].input_shapes[0]
-            except Exception as e:
-                st.write(f"Additional input shape attempts failed: {e}")
+        # Calculate output shapes based on layer type
+        if isinstance(layer, tf.keras.layers.Conv2D):
+            return calculate_conv_output_shape(prev_layer_shape, config)
             
-        else:  # output shape
-            st.write("Trying output shape methods...")
-            if isinstance(layer, tf.keras.layers.Dense):
-                st.write("Dense layer - using units for output shape")
-                return (None, config.get('units'))
-            elif isinstance(layer, tf.keras.layers.Conv2D):
-                st.write("Conv2D layer - calculating output shape")
-                if hasattr(layer, 'input_shape') and layer.input_shape is not None:
-                    input_shape = layer.input_shape
-                    filters = config.get('filters')
-                    return (None, input_shape[1], input_shape[2], filters)
-            elif isinstance(layer, tf.keras.layers.MaxPooling2D):
-                st.write("MaxPooling2D layer - calculating output shape")
-                if hasattr(layer, 'input_shape') and layer.input_shape is not None:
-                    input_shape = layer.input_shape
-                    pool_size = config.get('pool_size', (2, 2))
-                    return (None, input_shape[1]//pool_size[0], 
-                           input_shape[2]//pool_size[1], input_shape[3])
-            elif isinstance(layer, tf.keras.layers.Flatten):
-                st.write("Flatten layer - calculating output shape")
-                if hasattr(layer, 'input_shape') and layer.input_shape is not None:
-                    input_shape = layer.input_shape
-                    if len(input_shape) == 4:
-                        return (None, input_shape[1] * input_shape[2] * input_shape[3])
+        elif isinstance(layer, tf.keras.layers.MaxPooling2D):
+            return calculate_pool_output_shape(prev_layer_shape, config)
             
-            # Try getting output shape directly from layer
-            try:
-                st.write("Trying direct output shape computation")
-                if hasattr(layer, 'compute_output_shape') and layer.input_shape is not None:
-                    return layer.compute_output_shape(layer.input_shape)
-            except Exception as e:
-                st.write(f"Output shape computation failed: {e}")
-        
-        st.write(f"No shape found for {layer.__class__.__name__}")
-        return None
+        elif isinstance(layer, tf.keras.layers.Flatten):
+            if prev_layer_shape and len(prev_layer_shape) == 4:
+                flattened_size = prev_layer_shape[1] * prev_layer_shape[2] * prev_layer_shape[3]
+                return (None, flattened_size)
+                
+        elif isinstance(layer, tf.keras.layers.Dense):
+            units = config.get('units')
+            return (None, units)
+            
+        return prev_layer_shape
             
     except Exception as e:
         st.write(f"Error in get_layer_shape: {str(e)}")
         return None
     
-    
+
 def model_to_graphviz(model):
     try:
-        st.write("Starting graph creation...")
         dot = graphviz.Digraph(engine='dot', format='png')
         
         # Make the graph wider and adjust spacing
@@ -232,10 +225,14 @@ def model_to_graphviz(model):
             'Calculation': '#FFF8DC'  # Light yellow for calculations
         }
         
+        # Default node attributes
+        dot.attr('node', 
+                fontsize='16',
+                margin='0.4')
+        
         node_counter = 0
         
         # Handle input shape from model directly
-        st.write("Getting input shape...")
         model_input = model.input_shape
         if isinstance(model_input, tuple):
             height, width = model_input[1:3]
@@ -243,8 +240,9 @@ def model_to_graphviz(model):
         else:
             height, width = model_input[0][1:3]
             channels = model_input[0][3]
-        
-        st.write(f"Input dimensions: {height}x{width}x{channels}")    
+            
+        st.write(f"Initial input shape: ({height}, {width}, {channels})")
+        current_shape = (None, height, width, channels)
         channels_text = "RGB" if channels == 3 else "Grayscale"
         input_name = f'layer_{node_counter}'
         
@@ -259,9 +257,7 @@ def model_to_graphviz(model):
         prev_node = input_name
         node_counter += 1
         
-        st.write(f"\nTotal layers in model: {len(model.layers)}")
         dense_count = 0
-        
         for layer in model.layers:
             st.write(f"\nProcessing layer {node_counter}: {layer.__class__.__name__}")
             layer_type = layer.__class__.__name__
@@ -273,13 +269,13 @@ def model_to_graphviz(model):
                 st.write("Skipping InputLayer")
                 continue
                 
-            # Get shapes using helper method
-            st.write("Getting shapes...")
-            input_shape = get_layer_shape(layer, 'input')
-            output_shape = get_layer_shape(layer, 'output')
+            # Get shapes using helper method with previous shape
+            input_shape = current_shape
+            output_shape = get_layer_shape(layer, 'output', input_shape)
+            st.write(f"Calculated shapes - Input: {input_shape}, Output: {output_shape}")
             
-            st.write(f"Input shape: {input_shape}")
-            st.write(f"Output shape: {output_shape}")
+            # Update current shape for next layer
+            current_shape = output_shape
             
             # Skip if we can't get valid shapes
             if input_shape is None or output_shape is None:
@@ -292,8 +288,6 @@ def model_to_graphviz(model):
             color = '#FFFFFF'
             add_activation = False
             activation_type = None
-            
-            st.write(f"Processing layer type: {layer_type}")
             
             if isinstance(layer, layers.Conv2D):
                 calc_text = (
@@ -380,7 +374,6 @@ def model_to_graphviz(model):
             # Connect main flow
             dot.edge(prev_node, layer_name, penwidth='2.0')
             
-            st.write(f"Adding activation: {add_activation}")
             # Add activation if needed
             if add_activation and activation_type:
                 activation_name = f'activation_{node_counter}'
@@ -410,7 +403,6 @@ def model_to_graphviz(model):
                 prev_node = layer_name
             
             node_counter += 1
-            st.write(f"Finished processing layer {layer_type}")
         
         st.write("Graph creation completed")
         return dot
@@ -421,6 +413,7 @@ def model_to_graphviz(model):
         st.write(f"Error details: {error_details}")
         st.error(f"Visualization error: {str(e)}")
         return None
+
 
 def main():
     st.title("Dynamic CNN Model Architecture")
