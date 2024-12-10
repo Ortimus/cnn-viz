@@ -163,7 +163,7 @@ def get_layer_shape(layer, shape_type='output', prev_layer_shape=None):
     """Helper function to get layer shape safely"""
     try:
         config = layer.get_config()
-        st.write(f"Processing {layer.__class__.__name__} with previous shape: {prev_layer_shape}")
+        #st.write(f"Processing {layer.__class__.__name__} with previous shape: {prev_layer_shape}")
         
         if isinstance(layer, tf.keras.layers.InputLayer):
             shape = config.get('batch_input_shape')
@@ -241,7 +241,7 @@ def model_to_graphviz(model):
             height, width = model_input[0][1:3]
             channels = model_input[0][3]
             
-        st.write(f"Initial input shape: ({height}, {width}, {channels})")
+        #st.write(f"Initial input shape: ({height}, {width}, {channels})")
         current_shape = (None, height, width, channels)
         channels_text = "RGB" if channels == 3 else "Grayscale"
         input_name = f'layer_{node_counter}'
@@ -259,20 +259,20 @@ def model_to_graphviz(model):
         
         dense_count = 0
         for layer in model.layers:
-            st.write(f"\nProcessing layer {node_counter}: {layer.__class__.__name__}")
+            #st.write(f"\nProcessing layer {node_counter}: {layer.__class__.__name__}")
             layer_type = layer.__class__.__name__
             layer_name = f'layer_{node_counter}'
             calc_name = f'calc_{node_counter}'
             
             # Skip InputLayer since we handled input separately
             if isinstance(layer, tf.keras.layers.InputLayer):
-                st.write("Skipping InputLayer")
+                #st.write("Skipping InputLayer")
                 continue
                 
             # Get shapes using helper method with previous shape
             input_shape = current_shape
             output_shape = get_layer_shape(layer, 'output', input_shape)
-            st.write(f"Calculated shapes - Input: {input_shape}, Output: {output_shape}")
+            #st.write(f"Calculated shapes - Input: {input_shape}, Output: {output_shape}")
             
             # Update current shape for next layer
             current_shape = output_shape
@@ -336,7 +336,7 @@ def model_to_graphviz(model):
                     add_activation = True
                     activation_type = 'Softmax'
             
-            st.write(f"Creating nodes for layer {layer_type}")
+            #st.write(f"Creating nodes for layer {layer_type}")
             
             # Create a subgraph to keep layer and its calculation at same rank
             with dot.subgraph(name=f'cluster_{node_counter}') as cluster:
@@ -404,7 +404,7 @@ def model_to_graphviz(model):
             
             node_counter += 1
         
-        st.write("Graph creation completed")
+        #st.write("Graph creation completed")
         return dot
         
     except Exception as e:
